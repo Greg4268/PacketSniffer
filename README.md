@@ -42,8 +42,13 @@ python sniffer.py
 
 ## ⚠️ Notes
 - 🔐 Ensure you have the necessary permissions to sniff packets on your system.
-- 🌍 The sniffer runs on interface `en0` by default; modify this in the `sniff()` function if needed.
-  - The console will display available interfaces, you may need to adjust to the one you're intending to scan
+
+## Future Improvements
+- dynamic interface selection
+- "scan everything" option
+- table view in Qt Window for captured packets
+- matplotlib visualizations of data 
+
 
 ## 📜 License
 This project is licensed under the MIT License.
