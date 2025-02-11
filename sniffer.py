@@ -1,19 +1,16 @@
-import sys
-from scapy.all import * 
+from PySide6.QtWidgets import *
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6 import QtCore, QtWidgets, QtGui
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QTableWidget
+from scapy.all import * 
+import sys
+import datetime
 
 # for monitor fucntionality? 
 from scapy.config import conf
 conf.use_pcap = True
 
-from scapy.all import get_if_list, get_if_addr
 
-print(f"Available interfaces: ")
-for iface in get_if_list():
-    print(f"- {iface}: {get_if_addr(iface)}")
-
+# user options obj
 class Settings():
     def __init__(self, protocol='TCP', packet_count=1, save_to_file=False):
         self.protocol = protocol
@@ -44,7 +41,70 @@ class Settings():
     def saveToFile(self, value):
         self._save_to_file = value
 
-class MyWidget(QtWidgets.QWidget):
+# multithreading the sniffing task
+class SnifferThread(QThread):
+    packet_captured = Signal(object)
+
+    def __init__(self, iface="en0", filter_protocol="tcp", packet_count=10):
+        super().__init__()
+        self.iface = iface
+        self.filter_protocol = filter_protocol.lower()  # 🟢 Ensure lowercase
+        self.packet_count = packet_count
+
+    def run(self):
+        try:
+            print(f"Starting sniffing on {self.iface} for {self.packet_count} {self.filter_protocol.upper()} packets")
+            sniff(iface=self.iface, filter=self.filter_protocol, count=self.packet_count,
+                  prn=lambda pkt: self.packet_captured.emit(pkt), store=False)
+        except Exception as e:
+            print(f"❌ Sniffer error: {e}")
+
+
+class PacketTableWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Captured Packets")
+        self.resize(800,400)
+
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # Table Widget 
+        self.packet_table = QTableWidget()
+        self.packet_table.setColumnCount(5)
+        self.packet_table.setHorizontalHeaderLabels(["Timestamp", "Source IP", "Destination IP", "Protocol", "Length"])
+        self.layout.addWidget(self.packet_table)
+
+        # Button to clear table
+        self.clear_button = QPushButton("Clear Table")
+        self.clear_button.clicked.connect(self.clear_table)
+        self.layout.addWidget(self.clear_button)
+
+    def add_packet(self, packet):
+        if not packet.haslayer(IP):
+            return 
+        
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        protocol = "TCP" if packet.haslayer(TCP) else "UDP" if packet.haslayer(UDP) else "ARP"
+        length = len(packet)
+
+        row_position = self.packet_table.rowCount()
+        self.packet_table.insertRow(row_position)
+
+        self.packet_table.setItem(row_position, 0, QTableWidgetItem(timestamp))
+        self.packet_table.setItem(row_position, 1, QTableWidgetItem(src_ip))
+        self.packet_table.setItem(row_position, 2, QTableWidgetItem(dst_ip))
+        self.packet_table.setItem(row_position, 3, QTableWidgetItem(protocol))
+        self.packet_table.setItem(row_position, 4, QTableWidgetItem(str(length)))
+
+    def clear_table(self):
+        """Clears the table."""
+        self.packet_table.setRowCount(0)
+
+
+class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
@@ -59,6 +119,8 @@ class MyWidget(QtWidgets.QWidget):
         self.packet_count = 1
         self.saveToFile = False
         self.captured_packets = []
+        self.packet_table_window = None  
+        self.sniffer_thread = None
 
     def setup_ui(self):
         # set main layout 
@@ -123,15 +185,6 @@ class MyWidget(QtWidgets.QWidget):
 
         self.setWindowTitle("Packet Sniffer by Greg")
 
-
-        # packets table 
-        self.packet_table = QTableWidget()
-        self.packet_table.setColumnCount(5)
-        self.packet_table.setHorizontalHeaderLabels(["Timestamp", "Source IP", "Destination IP", "Protocol", "Length" ])
-        self.layout.addWidget(self.packet_table)
-
-
-
         self.setLayout(self.layout)
 
 
@@ -146,15 +199,14 @@ class MyWidget(QtWidgets.QWidget):
         self.resetBtn.clicked.connect(self.reset_inputs)
 
 
-
-    def save_to_file(self, saveToFile):
-        self.settings.saveToFile = saveToFile
-        print(f"/ SaveToFile set to: {self.settings.saveToFile} /")
+    def save_to_file(self, save_to_file):
+        self.save_to_file = save_to_file
+        print(f"/ SaveToFile set to: {self.save_to_file} /")
 
 
     def set_protocol(self, protocol):
-        self.settings.protocol = protocol
-        print(f"/ Protocol set to: {self.settings.protocol} /")
+        self.selected_protocol = protocol
+        print(f"/ Protocol set to: {self.selected_protocol} /")
 
 
     def get_packetCount(self):
@@ -163,45 +215,21 @@ class MyWidget(QtWidgets.QWidget):
 
 
     def runSniffer(self):
-        # run 
-        protocol_filter = self.settings.protocol.lower()
-        if protocol_filter in ["tcp", "udp", "arp"]:
-            bpf_filter = protocol_filter
-        else:
-            print(f"** WARNING : Invalid protocol '{protocol_filter}', defaulting to 'tcp' **")
-            bpf_filter = "tcp"
+        packet_count = self.spin_box.value()
 
-        packet_count = self.settings.packet_count
-        
-        self.captured_packets = []
+        if self.packet_table_window is None:
+            self.packet_table_window = PacketTableWindow()  # Create table window
+            self.packet_table_window.show()
 
-        print("** REVVING UP SNIFFER **")
-        packets = sniff(
-            iface= conf.iface,
-            stop_filter=self.stop_when_count_reached, 
-            filter=bpf_filter,
-            prn=lambda pkt: pkt.summary(), 
-            timeout=20)
+        # Run Sniffer Thread
+        if self.sniffer_thread and self.sniffer_thread.isRunning():
+            return  # Prevent multiple sniffers from running
 
-        # save to file if enabled 
-        if self.saveToFile:
-            wrpcap("captured_packets.pcap", packets)
-            print("\n** Packets saved to captured_packets.pcap **")
+        self.sniffer_thread = SnifferThread(iface="en0", filter_protocol=self.selected_protocol, packet_count=packet_count)
+        self.sniffer_thread.packet_captured.connect(self.packet_table_window.add_packet)
+        self.sniffer_thread.start()
 
-        print("\n ===   ALL PACKETS COLLECTED   ===")
-        print("\n +    press reset to run again   +")
-
-
-    # determines when to stop the sniff() from running once enough of the specified protocol packets are received 
-    def stop_when_count_reached(self, pkt):
-        protocol_map = {"tcp": TCP, "udp": UDP, "arp": Raw}  # ARP often appears in Raw layer
-
-        if self.settings.protocol.lower() in protocol_map:
-            protocol_layer = protocol_map[self.settings.protocol.lower()]
-            if pkt.haslayer(protocol_layer):
-                self.captured_packets.append(pkt)
-
-        return len(self.captured_packets) >= self.settings.packet_count
+    
 
     def reset_inputs(self): 
         self.spin_box.setValue(1)  # Reset packet count
@@ -215,8 +243,8 @@ class MyWidget(QtWidgets.QWidget):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
 
-    widget = MyWidget()
-    widget.resize(600, 600)
-    widget.show()
+    main_window = MainWindow()
+    main_window.resize(600, 600)
+    main_window.show()
 
     sys.exit(app.exec())
