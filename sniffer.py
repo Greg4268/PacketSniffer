@@ -2,7 +2,7 @@ import sys
 from scapy.all import * 
 from PySide6 import QtCore, QtWidgets, QtGui
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QTableWidget
 
 # for monitor fucntionality? 
 from scapy.config import conf
@@ -15,10 +15,10 @@ for iface in get_if_list():
     print(f"- {iface}: {get_if_addr(iface)}")
 
 class Settings():
-    def __init__(self, protocol='TCP', packetCount=1, saveToFile=False):
+    def __init__(self, protocol='TCP', packet_count=1, save_to_file=False):
         self.protocol = protocol
-        self.packetCount = packetCount
-        self.saveToFile = saveToFile
+        self.packet_count = packet_count
+        self.save_to_file = save_to_file
 
     @property
     def protocol(self):
@@ -48,46 +48,48 @@ class MyWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
 
-        # Set the main vertical layout
-        self.layout = QVBoxLayout(self)
+        # window setup 
+        self.setup_ui()
+        self.setup_connections()
 
-        # Label for protocol section
-        self.label = QLabel("Choose Protocol (1) to Monitor")
-        self.layout.addWidget(self.label, alignment=Qt.AlignmentFlag.AlignCenter)
+        # Create settings object
+        self.settings = Settings()
+        
+        self.protocol = None
+        self.packet_count = 1
+        self.saveToFile = False
+        self.captured_packets = []
 
-        # Create a horizontal layout for protocol buttons
+    def setup_ui(self):
+        # set main layout 
+        self.layout = QVBoxLayout()
         self.button_layout = QHBoxLayout()
 
-        # Create buttons for protocol selection
+        # create widgets 
+        self.label = QLabel("Choose Protocol (1) to Monitor")
+            # buttons for protocol selection
         self.TCP_Btn = QPushButton("TCP")
         self.UDP_Btn = QPushButton("UDP")
         self.ARP_Btn = QPushButton("ARP")
 
-        # Format buttons
+
+        # add widgets to layout 
+        self.layout.addWidget(self.label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # add buttons to layout 
         for btn in [self.TCP_Btn, self.UDP_Btn, self.ARP_Btn]:
             btn.setFixedSize(80, 30)  # Set button size
             self.button_layout.addWidget(btn)  # Add buttons to horizontal layout
-
-        # Add the button layout to the main layout
         self.layout.addLayout(self.button_layout)
 
-        # Add spacing and margins
-        self.button_layout.setSpacing(15)  # Add space between buttons
-        self.layout.setContentsMargins(10, 10, 10, 10)  # Padding for the whole layout
+        self.button_layout.setSpacing(15)
+        self.layout.setContentsMargins(10,10,10,10)
 
-        # Create settings object
-        self.settings = Settings()
 
-        # Connect buttons to change protocol
-        self.TCP_Btn.clicked.connect(lambda: self.set_protocol("TCP"))
-        self.UDP_Btn.clicked.connect(lambda: self.set_protocol("UDP"))
-        self.ARP_Btn.clicked.connect(lambda: self.set_protocol("ARP"))
-
-        # label for packet count 
         self.pcLabel = QLabel("Set number of packets to monitor")
         self.layout.addWidget(self.pcLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Create input field for packet count
+        # input field for packet count 
         self.spin_box = QSpinBox()
         self.spin_box.setRange(1, 10000)  # Set min and max values
         self.spin_box.setValue(1)  # Default value
@@ -98,7 +100,6 @@ class MyWidget(QtWidgets.QWidget):
         self.packetCount_Btn = QPushButton("Set Packet Count")
         self.packetCount_Btn.setFixedSize(150,35) # btn size 
         self.layout.addWidget(self.packetCount_Btn,alignment=Qt.AlignmentFlag.AlignCenter)
-        self.packetCount_Btn.clicked.connect(self.get_packetCount)
 
         # save to file label 
         self.saveLabel = QLabel("Save to pcap file?")
@@ -109,43 +110,59 @@ class MyWidget(QtWidgets.QWidget):
         self.save_Btn = QPushButton("Yes, Save!")
         self.save_Btn.setFixedSize(120, 35)  # Set fixed size
         self.save_layout.addWidget(self.save_Btn, alignment=Qt.AlignmentFlag.AlignCenter)  # Add to horizontal layout
-        #self.save_layout.addStretch()  # Push button to the left
         self.layout.addLayout(self.save_layout)  # Add to the main layout
-
-        self.save_Btn.clicked.connect(lambda: self.save_to_file(True))
 
         # Execute button
         self.executeBtn = QPushButton("Run Sniffer")
         self.executeBtn.setFixedSize(150, 40)  # Set fixed width to prevent stretching
         self.layout.addWidget(self.executeBtn, alignment=Qt.AlignmentFlag.AlignCenter)  # Center alignment in PySide6
-        self.executeBtn.clicked.connect(self.runSniffer)
 
         self.resetBtn = QPushButton("Reset")
         self.resetBtn.setFixedSize(150, 40)
         self.layout.addWidget(self.resetBtn, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.resetBtn.clicked.connect(self.reset_inputs)
-        
-        # Set the window title
+
         self.setWindowTitle("Packet Sniffer by Greg")
 
-        self.protocol = None
-        self.packet_count = 1
-        self.saveToFile = False
-        self.captured_packets = []
+
+        # packets table 
+        self.packet_table = QTableWidget()
+        self.packet_table.setColumnCount(5)
+        self.packet_table.setHorizontalHeaderLabels(["Timestamp", "Source IP", "Destination IP", "Protocol", "Length" ])
+        self.layout.addWidget(self.packet_table)
+
+
+
+        self.setLayout(self.layout)
+
+
+    def setup_connections(self):
+        # connect buttons 
+        self.TCP_Btn.clicked.connect(lambda: self.set_protocol("TCP"))
+        self.UDP_Btn.clicked.connect(lambda: self.set_protocol("UDP"))
+        self.ARP_Btn.clicked.connect(lambda: self.set_protocol("ARP"))
+        self.packetCount_Btn.clicked.connect(self.get_packetCount)
+        self.save_Btn.clicked.connect(lambda: self.save_to_file(True))
+        self.executeBtn.clicked.connect(self.runSniffer)
+        self.resetBtn.clicked.connect(self.reset_inputs)
+
+
 
     def save_to_file(self, saveToFile):
         self.settings.saveToFile = saveToFile
         print(f"/ SaveToFile set to: {self.settings.saveToFile} /")
 
+
     def set_protocol(self, protocol):
         self.settings.protocol = protocol
         print(f"/ Protocol set to: {self.settings.protocol} /")
+
 
     def get_packetCount(self):
         self.settings.packet_count = self.spin_box.value()
         print(f"/ Packet Count set to: {self.settings.packet_count} /")
 
-    def runSniffer(self, settings):
+
+    def runSniffer(self):
         # run 
         protocol_filter = self.settings.protocol.lower()
         if protocol_filter in ["tcp", "udp", "arp"]:
@@ -160,14 +177,14 @@ class MyWidget(QtWidgets.QWidget):
 
         print("** REVVING UP SNIFFER **")
         packets = sniff(
-            iface='en0',
+            iface= conf.iface,
             stop_filter=self.stop_when_count_reached, 
             filter=bpf_filter,
             prn=lambda pkt: pkt.summary(), 
             timeout=20)
 
         # save to file if enabled 
-        if self.settings.saveToFile:
+        if self.saveToFile:
             wrpcap("captured_packets.pcap", packets)
             print("\n** Packets saved to captured_packets.pcap **")
 
