@@ -48,7 +48,7 @@ class SnifferThread(QThread):
     def __init__(self, iface="en0", filter_protocol="tcp", packet_count=10):
         super().__init__()
         self.iface = iface
-        self.filter_protocol = filter_protocol.lower()  # 🟢 Ensure lowercase
+        self.filter_protocol = filter_protocol.lower()  
         self.packet_count = packet_count
 
     def run(self):
@@ -64,7 +64,7 @@ class PacketTableWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Captured Packets")
-        self.resize(800,400)
+        self.resize(600,1000)
 
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
@@ -81,9 +81,11 @@ class PacketTableWindow(QWidget):
         self.layout.addWidget(self.clear_button)
 
     def add_packet(self, packet):
+        # ignore packets without ip 
         if not packet.haslayer(IP):
             return 
         
+        # format 
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         src_ip = packet[IP].src
         dst_ip = packet[IP].dst
@@ -115,9 +117,9 @@ class MainWindow(QWidget):
         # Create settings object
         self.settings = Settings()
         
-        self.protocol = None
+        self.selected_protocol = None
         self.packet_count = 1
-        self.saveToFile = False
+        self.save_to_file = False
         self.captured_packets = []
         self.packet_table_window = None  
         self.sniffer_thread = None
@@ -217,8 +219,12 @@ class MainWindow(QWidget):
     def runSniffer(self):
         packet_count = self.spin_box.value()
 
+        main_x, main_y = self.x(), self.y()
+        main_width = self.width()
+
         if self.packet_table_window is None:
-            self.packet_table_window = PacketTableWindow()  # Create table window
+            self.packet_table_window = PacketTableWindow()  
+            self.packet_table_window.move(main_x + main_width + 10, main_y)
             self.packet_table_window.show()
 
         # Run Sniffer Thread
